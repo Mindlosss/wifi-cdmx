@@ -1,7 +1,7 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, inject, signal, Injector, runInInjectionContext } from '@angular/core'; // <--- Importar Injector y runInInjectionContext
 import { Firestore, collection, doc, setDoc, deleteDoc, collectionData, query, where } from '@angular/fire/firestore';
-import { AuthService } from './auth.service';
-import { Observable, of, switchMap } from 'rxjs';
+import { Auth, authState } from '@angular/fire/auth'; 
+import { Observable, of, switchMap, catchError } from 'rxjs';
 import { toSignal } from '@angular/core/rxjs-interop';
 
 @Injectable({
@@ -9,23 +9,36 @@ import { toSignal } from '@angular/core/rxjs-interop';
 })
 export class FavoritesService {
   private firestore = inject(Firestore);
-  private authService = inject(AuthService);
+  private auth = inject(Auth);
+  private injector = inject(Injector);
 
-  private favorites$ = collectionData(
-    query(
-      collection(this.firestore, 'favorites'),
-    ), { idField: 'id' } 
-  ) as Observable<{id: string}[]>;
+  private favorites$ = authState(this.auth).pipe(
+    switchMap(user => {
+      if (!user) return of([]);
+
+      const col = collection(this.firestore, 'favorites');
+      const q = query(col, where('userId', '==', user.uid));
+      
+      return runInInjectionContext(this.injector, () => 
+        collectionData(q, { idField: 'docId' })
+      );
+    }),
+    catchError(err => {
+      console.error('Error en favoritos:', err);
+      return of([]);
+    })
+  ) as Observable<any[]>;
 
   favorites = toSignal(this.favorites$, { initialValue: [] });
 
   async toggleFavorite(wifiId: string) {
-    const userId = this.authService.getUserId();
+    const userId = this.auth.currentUser?.uid;
     if (!userId) return;
 
-    const docRef = doc(this.firestore, 'favorites', wifiId); 
+    const uniqueDocId = `${userId}_${wifiId}`; 
+    const docRef = doc(this.firestore, 'favorites', uniqueDocId); 
 
-    const exists = this.favorites()?.some(f => f.id === wifiId);
+    const exists = this.isFavorite(wifiId);
 
     try {
       if (exists) {
@@ -34,7 +47,7 @@ export class FavoritesService {
         await setDoc(docRef, {
           wifiId,
           userId,
-          addedAt: new Date()
+          addedAt: new Date().toISOString()
         });
       }
     } catch (error) {
@@ -43,6 +56,6 @@ export class FavoritesService {
   }
 
   isFavorite(wifiId: string): boolean {
-    return this.favorites()?.some(f => f.id === wifiId) ?? false;
+    return this.favorites()?.some((f: any) => f.wifiId === wifiId) ?? false;
   }
 }

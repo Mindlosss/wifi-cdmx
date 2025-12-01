@@ -268,9 +268,10 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
 
   favPoints = computed(() => {
     const all = this.rawPoints();
-    const favIds = this.favService.favorites(); 
-    if (!favIds || all.length === 0) return [];
-    return all.filter(p => favIds.some(f => f.id === p.id));
+    const favs = this.favService.favorites(); 
+    if (!favs || all.length === 0) return [];
+    
+    return all.filter(p => favs.some((f: any) => f.wifiId === p.id));
   });
 
   @ViewChild('mapContainer') mapContainer!: ElementRef;
@@ -293,13 +294,12 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
     });
 
     // 6. EFECTO DE ZOOM AUTOMÁTICO: Solo reacciona cuando cambian los FILTROS/DATOS
-    // Al separar esto, cuando das "Like" (cambia favorites), este effect NO corre.
     effect(() => {
       const points = this.filteredPoints();
       if (this.map && points.length > 0 && !this.isLoading()) {
          const latLngs = points
             .map(p => [Number(p.latitud), Number(p.longitud)] as [number, number])
-            .filter(c => !isNaN(c[0]) && !isNaN(c[1])); // Doble seguridad
+            .filter(c => !isNaN(c[0]) && !isNaN(c[1])); 
          
          if (latLngs.length > 0) {
             const bounds = L.latLngBounds(latLngs);
@@ -482,8 +482,5 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
           .addTo(this.markersLayer!);
       }
     });
-    
-    // NOTA: He eliminado el bloque if (...) { fitBounds } de aquí.
-    // Ahora vive en su propio effect en el constructor.
   }
 }
