@@ -5,6 +5,8 @@ import * as L from 'leaflet';
 import { WifiDataService } from '../../core/services/wifi-data.service';
 import { WifiPoint } from '../../core/models/wifi-point.interface';
 import { calculateDistance } from '../../core/utils/geo.utils';
+import { FavoritesService } from '../../core/services/favorites.service';
+import { AuthService } from '../../core/services/auth.service';
 
 // Iconos para el mapa
 const iconRetinaUrl = 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png';
@@ -23,6 +25,16 @@ const iconDefault = L.icon({
 });
 L.Marker.prototype.options.icon = iconDefault;
 
+const iconFav = L.icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-gold.png',
+  shadowUrl,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  tooltipAnchor: [16, -28],
+  shadowSize: [41, 41]
+});
+
 @Component({
   selector: 'app-map',
   standalone: true,
@@ -30,7 +42,7 @@ L.Marker.prototype.options.icon = iconDefault;
   template: `
     <div class="relative w-full h-screen">
       
-      <div class="absolute top-4 right-4 z-[1000] bg-white p-4 rounded-lg shadow-lg w-72">
+      <div class="absolute top-4 right-4 z-[1000] bg-white p-4 rounded-lg shadow-lg w-72 max-h-[85vh] overflow-y-auto">
         <h2 class="text-lg font-bold text-gray-800 mb-2">Puntos WiFi CDMX</h2>
         
         <div class="mb-2">
@@ -45,6 +57,31 @@ L.Marker.prototype.options.icon = iconDefault;
             }
           </select>
         </div>
+
+        <!-- select favs -->
+        @if (selectedPoint(); as point) {
+          <div class="mb-4 mt-2 p-3 bg-blue-50 rounded border border-blue-100 animate-fade-in">
+            <div class="flex justify-between items-start">
+               <div>
+                  <h3 class="font-bold text-gray-800 text-sm mb-1 line-clamp-2">{{ point.id }}</h3>
+                  <p class="text-xs text-gray-600 mb-2">{{ point.programa }}</p>
+               </div>
+               <button (click)="selectedPoint.set(null)" class="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            
+            <button 
+              (click)="toggleFav(point)"
+              class="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded text-sm font-medium transition-colors border"
+              [ngClass]="favService.isFavorite(point.id) ? 'bg-yellow-100 text-yellow-700 border-yellow-200 hover:bg-yellow-200' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'">
+              
+              @if (favService.isFavorite(point.id)) {
+                <span>★ Quitar Favorito</span>
+              } @else {
+                <span>☆ Guardar Favorito</span>
+              }
+            </button>
+          </div>
+        }
 
         <div class="text-xs text-gray-500 mt-2 flex justify-between">
           <span>Puntos visibles:</span>
@@ -94,14 +131,17 @@ L.Marker.prototype.options.icon = iconDefault;
 })
 export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
   private wifiService = inject(WifiDataService);
+  public favService = inject(FavoritesService);
+  private authService = inject(AuthService);
   
   //STATE Signals
   // 1. Datos crudos
   rawPoints = signal<WifiPoint[]>([]);
   isLoading = signal<boolean>(true);
   
-  // 2. Estado del filtro
+  // 2. Estado del filtro y selección
   selectedAlcaldia = signal<string>('TODAS');
+  selectedPoint = signal<WifiPoint | null>(null);
 
   // 3. Lista de alcaldías unicas para el dropdown
   uniqueAlcaldias = computed(() => {
@@ -131,9 +171,11 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
   private markersLayer: L.LayerGroup | undefined; // Capa para manejar marcadores
 
   constructor() {
-    // 5. Reacciona automáticamente a cambios en filteredPoints
+    // 5. Reacciona automáticamente a cambios en filteredPoints O favoritos
     effect(() => {
       const points = this.filteredPoints();
+      const favorites = this.favService.favorites(); // Dependencia clave para actualizar iconos
+
       // Solo intentamos dibujar los marcadores si el mapa ya está inicializado
       if (this.map && !this.isLoading()) {
         this.updateMapMarkers(points);
@@ -157,6 +199,11 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.map?.remove();
+  }
+
+  // Método para el botón del HTML
+  toggleFav(point: WifiPoint) {
+    this.favService.toggleFavorite(point.id);
   }
 
   // Apartado de recomendación
@@ -197,6 +244,8 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
         if (nearestPoint && this.map) {
           const targetLat = Number((nearestPoint as WifiPoint).latitud);
           const targetLng = Number((nearestPoint as WifiPoint).longitud);
+          
+          this.selectedPoint.set(nearestPoint); // Auto-seleccionar para mostrar boton Fav
 
           // Marcador del usuario
           L.circleMarker([userLat, userLng], {
@@ -261,7 +310,17 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
       const lng = Number(point.longitud);
 
       if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-        L.marker([lat, lng])
+        
+        // Verificar si es favorito para elegir el icono
+        const isFav = this.favService.isFavorite(point.id);
+        const iconToUse = isFav ? iconFav : iconDefault;
+
+        L.marker([lat, lng], { icon: iconToUse })
+          .on('click', () => {
+             // Al hacer click, guardamos el punto en el signal para que el template lo muestre
+             this.selectedPoint.set(point);
+             this.map?.flyTo([lat, lng], 16, { duration: 1 });
+          })
           .bindPopup(`
             <div class="p-2 font-sans">
               <h3 class="font-bold text-sm">${point.id}</h3>
